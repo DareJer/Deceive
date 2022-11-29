@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Security;
@@ -12,7 +13,7 @@ using System.Xml;
 using System.Xml.Linq;
 using Deceive.Properties;
 
-namespace Deceive;
+namespace Deceive { 
 
 internal class MainController : ApplicationContext
 {
@@ -26,14 +27,32 @@ internal class MainController : ApplicationContext
             BalloonTipText = "Deceive is currently masking your status. Right-click the tray icon for more options."
         };
         TrayIcon.ShowBalloonTip(5000);
-
-        LoadStatus();
+        Rank = "Default";
+        Ranks = new Dictionary<string, int[]>(){
+            {"Iron", new int[] {3,4,5}},
+            {"Bronze", new int[] {6,7,8}},
+            {"Silver", new int[] {9,10,11}},
+            {"Gold", new int[] {12,13,14}},
+            {"Platinum", new int[] {15,16,17}},
+            {"Diamond", new int[] {18,19,20}},
+            {"Ascendant", new int[] {21,22,23}},
+            {"Immortal", new int[] {24,25,26}},
+            {"Radiant", new int[] {27}}
+        };
+            LoadStatus();
         UpdateTray();
     }
 
     private NotifyIcon TrayIcon { get; }
+    private Dictionary<string, int[]> Ranks { get; }
     private bool Enabled { get; set; } = true;
     private string Status { get; set; } = null!;
+    private JsonNode? DefaultPlayerJson { get; set; } = null!;
+    private string Rank { get; set; } = null!;
+    private int? RankNum { get; set; } = null!;
+    private int? LeaderboardNum { get; set; } = null!;
+    private int? PlayerLevel { get; set; } = null!;
+    private string gameName { get; set; } = null!;
     private string StatusFile { get; } = Path.Combine(Persistence.DataDir, "status");
     private bool ConnectToMuc { get; set; } = true;
     private bool InsertedFakePlayer { get; set; }
@@ -49,9 +68,25 @@ internal class MainController : ApplicationContext
     private ToolStripMenuItem EnabledMenuItem { get; set; } = null!;
     private ToolStripMenuItem ChatStatus { get; set; } = null!;
     private ToolStripMenuItem OfflineStatus { get; set; } = null!;
+    private ToolStripMenuItem AwayStatus { get; set; } = null!;
     private ToolStripMenuItem MobileStatus { get; set; } = null!;
 
-    internal event EventHandler? ConnectionErrored;
+    private ToolStripMenuItem DefaultRank { get; set; } = null!;
+    private ToolStripMenuItem IronRank { get; set; } = null!;
+    private ToolStripMenuItem BronzeRank { get; set; } = null!;
+    private ToolStripMenuItem SilverRank { get; set; } = null!;
+    private ToolStripMenuItem GoldRank { get; set; } = null!;
+    private ToolStripMenuItem PlatinumRank { get; set; } = null!;
+    private ToolStripMenuItem DiamondRank { get; set; } = null!;
+    private ToolStripMenuItem AscendantRank { get; set; } = null!;
+    private ToolStripMenuItem ImmortalRank { get; set; } = null!;
+    private ToolStripMenuItem RadiantRank { get; set; } = null!;
+
+    private ToolStripMenuItem OneRankNum { get; set; } = null!;
+    private ToolStripMenuItem TwoRankNum { get; set; } = null!;
+    private ToolStripMenuItem ThreeRankNum { get; set; } = null!;
+
+        internal event EventHandler? ConnectionErrored;
 
     private void UpdateTray()
     {
@@ -71,28 +106,78 @@ internal class MainController : ApplicationContext
             UpdateTray();
         }) { Checked = ConnectToMuc };
 
-        ChatStatus = new ToolStripMenuItem("Online", null, async (_, _) =>
+        ToolStripMenuItem StatusItem(string item_name, string newStatus = null!)
         {
-            await UpdateStatusAsync(Status = "chat");
-            Enabled = true;
-            UpdateTray();
-        }) { Checked = Status.Equals("chat") };
+                var item = new ToolStripMenuItem(item_name, null, async (_, _) =>
+                {
+                    if (newStatus is null)
+                        newStatus = item_name.ToLower();
+                    await UpdateStatusAsync(Status = newStatus);
+                    Enabled = true;
+                    UpdateTray();
+                })
+                { Checked = Status.Equals(item_name) };
+                return item;
+        }
 
-        OfflineStatus = new ToolStripMenuItem("Offline", null, async (_, _) =>
-        {
-            await UpdateStatusAsync(Status = "offline");
-            Enabled = true;
-            UpdateTray();
-        }) { Checked = Status.Equals("offline") };
 
-        MobileStatus = new ToolStripMenuItem("Mobile", null, async (_, _) =>
-        {
-            await UpdateStatusAsync(Status = "mobile");
-            Enabled = true;
-            UpdateTray();
-        }) { Checked = Status.Equals("mobile") };
+        ChatStatus = StatusItem("Online", "chat");
+        OfflineStatus = StatusItem("Offline");
+        AwayStatus = StatusItem("Away");
+        //CustomStatus = StatusItem("");
+        MobileStatus = StatusItem("Mobile");
 
         var typeMenuItem = new ToolStripMenuItem("Status Type", null, ChatStatus, OfflineStatus, MobileStatus);
+
+        ToolStripMenuItem RankItem(string item_name)
+        {
+                var item = new ToolStripMenuItem(item_name, null, async (_, _) =>
+                {
+                    Trace.WriteLine("[[CHANGING RANK TO: " + item_name);
+                    LeaderboardNum = 0;
+                    Rank = item_name;
+                    await UpdateStatusAsync(Status);
+                    await SendMessageFromFakePlayerAsync("Your rank is now set to " + Rank + " " + RankNum + " #" + LeaderboardNum);
+                    Enabled = true; 
+                    UpdateTray();
+                })
+                { Checked = Rank.Equals(item_name) };
+                return item;
+        }
+
+        DefaultRank = RankItem("Default");
+        IronRank = RankItem("Iron");
+        BronzeRank = RankItem("Bronze");
+        SilverRank = RankItem("Silver");
+        GoldRank = RankItem("Gold");
+        PlatinumRank = RankItem("Platinum");
+        DiamondRank = RankItem("Diamond");
+        AscendantRank = RankItem("Ascendant");
+        ImmortalRank = RankItem("Immortal");
+        RadiantRank = RankItem("Radiant");
+
+        var rankMenuItem = new ToolStripMenuItem(
+            "Rank", null, DefaultRank, IronRank, BronzeRank, SilverRank, GoldRank,
+                          PlatinumRank, DiamondRank, AscendantRank, ImmortalRank, RadiantRank);
+
+        ToolStripMenuItem RankNumItem(int item_name)
+        {
+            var item = new ToolStripMenuItem(item_name.ToString(), null, async (_, _) =>
+            {
+                RankNum = item_name;
+                await UpdateStatusAsync(Status);
+                await SendMessageFromFakePlayerAsync("Your rank is now set to " + Rank + " " + RankNum + " #" + LeaderboardNum);
+                Enabled = true;
+                UpdateTray();
+            })
+            { Checked = RankNum.Equals(item_name) };
+            return item;
+        }
+
+        OneRankNum = RankNumItem(1);
+        TwoRankNum = RankNumItem(2);
+        ThreeRankNum = RankNumItem(3);
+        var rankNumItem = new ToolStripMenuItem("Rank Number", null, OneRankNum, TwoRankNum, ThreeRankNum);
 
         var restartWithDifferentGameItem = new ToolStripMenuItem("Restart and launch a different game", null, (_, _) =>
         {
@@ -143,7 +228,7 @@ internal class MainController : ApplicationContext
 
         TrayIcon.ContextMenuStrip.Items.AddRange(new ToolStripItem[]
         {
-            aboutMenuItem, EnabledMenuItem, typeMenuItem, mucMenuItem, closeIn, closeOut, createFakePlayer, sendTestMsg, restartWithDifferentGameItem, quitMenuItem
+            aboutMenuItem, EnabledMenuItem, typeMenuItem, rankMenuItem, rankNumItem, mucMenuItem, closeIn, closeOut, createFakePlayer, sendTestMsg, restartWithDifferentGameItem, quitMenuItem
         });
 #else
         TrayIcon.ContextMenuStrip.Items.AddRange(new ToolStripItem[] { aboutMenuItem, EnabledMenuItem, typeMenuItem, mucMenuItem, restartWithDifferentGameItem, quitMenuItem });
@@ -181,52 +266,91 @@ internal class MainController : ApplicationContext
                     Trace.WriteLine("<!--RC TO SERVER ORIGINAL-->" + content);
                     await PossiblyRewriteAndResendPresenceAsync(content, Status);
                 }
-                else if (content.Contains("41c322a1-b328-495b-a004-5ccd3e45eae8@eu1.pvp.net"))
+                else if (content.Contains("41c322a1-b328-495b-a004-5ccd3e45eae8@eu1.pvp.net") && content.Contains("<body>"))
                 {
+                    string s = content.Split(new string[] { "body" }, StringSplitOptions.None)[1];
+                    string message = s.Substring(1, s.Length - 3);
+                    var args = message.Split();
+                    string command = args[0];
                     if (content.ToLower().Contains("offline"))
                     {
                         if (!Enabled)
                             await SendMessageFromFakePlayerAsync("Deceive is now enabled.");
                         OfflineStatus.PerformClick();
                     }
-                    else if (content.ToLower().Contains("mobile"))
+                    else if (message.ToLower().StartsWith("mobile"))
                     {
                         if (!Enabled)
                             await SendMessageFromFakePlayerAsync("Deceive is now enabled.");
                         MobileStatus.PerformClick();
                     }
-                    else if (content.ToLower().Contains("online"))
+                    else if (message.ToLower().StartsWith("online"))
                     {
                         if (!Enabled)
                             await SendMessageFromFakePlayerAsync("Deceive is now enabled.");
                         ChatStatus.PerformClick();
                     }
-                    else if (content.ToLower().Contains("enable"))
+                    else if (message.ToLower().StartsWith("enable"))
                     {
                         if (Enabled)
                             await SendMessageFromFakePlayerAsync("Deceive is already enabled.");
                         else
                             EnabledMenuItem.PerformClick();
                     }
-                    else if (content.ToLower().Contains("disable"))
+                    else if (message.ToLower().StartsWith("disable"))
                     {
                         if (!Enabled)
                             await SendMessageFromFakePlayerAsync("Deceive is already disabled.");
                         else
                             EnabledMenuItem.PerformClick();
                     }
-                    else if (content.ToLower().Contains("status"))
+                    else if (message.ToLower().StartsWith("status"))
                     {
                         if (Status == "chat")
                             await SendMessageFromFakePlayerAsync("You are appearing online.");
                         else
                             await SendMessageFromFakePlayerAsync("You are appearing " + Status + ".");
                     }
-                    else if (content.ToLower().Contains("help"))
+                    else if (message.ToLower().StartsWith("help"))
                     {
                         await SendMessageFromFakePlayerAsync("You can send the following messages to quickly change Deceive settings: online/offline/mobile/enable/disable/status");
                     }
-
+                    else if (message.ToLower().StartsWith("level"))
+                    {
+                        try
+                        {
+                            PlayerLevel = Int32.Parse(message.Split()[1]);
+                            await SendMessageFromFakePlayerAsync("Level set to " + PlayerLevel);
+                        }
+                        catch
+                        {
+                            await SendMessageFromFakePlayerAsync("Invalid arguments. Syntax: level <number>");
+                        }
+                    }
+                    else if (message.ToLower().StartsWith("leaderboard"))
+                    {
+                        try
+                        {
+                            LeaderboardNum = Int32.Parse(message.Split(' ')[1]);
+                            await SendMessageFromFakePlayerAsync("Your rank is now set to " + Rank + " " + RankNum + " #" + LeaderboardNum);
+                        }
+                        catch
+                        {
+                            await SendMessageFromFakePlayerAsync("Invalid arguments. Syntax: leaderboard <number>");
+                        }
+                    }
+                    else if (message.ToLower().StartsWith("gamename"))
+                    {
+                        try
+                        {
+                            gameName = message.Substring(8, message.Length-8);
+                            await SendMessageFromFakePlayerAsync("Game name set to: " + gameName);
+                        }
+                        catch
+                        {
+                            await SendMessageFromFakePlayerAsync("Invalid arguments. Syntax: gamename <name>");
+                        }
+                    }
                     //Don't send anything involving our fake user to chat servers
                     Trace.WriteLine("<!--RC TO SERVER REMOVED-->" + content);
                 }
@@ -271,6 +395,7 @@ internal class MainController : ApplicationContext
 
                 // Insert fake player into roster
                 const string roster = "<query xmlns='jabber:iq:riotgames:roster'>";
+                const string idk = "<x xmlns='http://jabber.org/protocol/muc#user'>";
                 if (!InsertedFakePlayer && content.Contains(roster))
                 {
                     InsertedFakePlayer = true;
@@ -282,6 +407,12 @@ internal class MainController : ApplicationContext
                         "</item>");
                     var contentBytes = Encoding.UTF8.GetBytes(content);
                     await Incoming.WriteAsync(contentBytes, 0, contentBytes.Length);
+                    Trace.WriteLine("<!--DECEIVE TO RC-->" + content);
+                }
+                else if (content.Contains(idk))
+                {
+
+                    //await Incoming.WriteAsync(contentBytes, 0, contentBytes.Length);
                     Trace.WriteLine("<!--DECEIVE TO RC-->" + content);
                 }
                 else
@@ -336,7 +467,68 @@ internal class MainController : ApplicationContext
                 }
 
                 if (targetStatus == "chat")
+                {
+                    var valorantBase64 = presence.Element("games")?.Element("valorant")?.Element("p")?.Value;
+                    if (valorantBase64 is not null)
+                    {
+                        int? newRank = null!;
+                        var valorantPresence = Encoding.UTF8.GetString(Convert.FromBase64String(valorantBase64));
+                        var valorantJson = JsonSerializer.Deserialize<JsonNode>(valorantPresence);
+                        if (valorantJson is not null)
+                        {
+                            Trace.WriteLine("!!RankBefore: " + Rank + "\naccountLevel: " + valorantJson?["accountLevel"] + "\ncompetitiveTier: " + valorantJson?["competitiveTier"] + "\nleaderboardPosition: " + valorantJson?["leaderboardPosition"]);
+                            if (Rank != "Default")
+                            {
+                                if (Rank == "Radiant")
+                                {
+                                    newRank = Ranks[Rank][0];
+                                }
+                                else
+                                {
+                                    if (RankNum is not null)
+                                        newRank = Ranks[Rank][((int)RankNum)-1];
+                                    else
+                                        Trace.WriteLine("RankNum is null");
+                                }
+                                valorantJson["competitiveTier"] = newRank;
+                            }
+                            else
+                            {
+                                continue;
+                                //valorantJson = DefaultPlayerJson; 
+                            }
+                            valorantJson["accountLevel"] = PlayerLevel;
+                            //valorantJson["competitiveTier"] = newRank;
+                            valorantJson["leaderboardPosition"] = LeaderboardNum;
+                            if (gameName is not null)
+                                valorantJson["queueId"] = gameName;
+                                valorantJson["sessionLoopState"] = "INGAME";
+                                valorantJson["partyOwnerSessionLoopsState"] = "INGAME";
+                            
+                            valorantJson["sessionLoopState"] = "INGAME";
+                            valorantJson["partyOwnerSessionLoopsState"] = "INGAME";
+                            valorantJson["customGameName"] = "peeeee";
+                            valorantJson["partyOwnerMatchMap"] = "/Game/Maps/Bonsai/Bonsai";
+                            valorantJson["partyOwnerMatchScoreAllyTeam"] = 50;
+                            valorantJson["partyOwnerMatchScoreEnemyTeam"] = 50;
+                            valorantJson["matchMap"] = "/Game/Maps/Canyon/Canyon";
+                            valorantJson["partyId"] = "e5067d61-7d60-4e68-a0fd-71e1a6f29c58";
+                            valorantJson["maxPartySize"] = 2147483647;
+                            valorantJson["queueId"] = "Fuckin yo bitch";
+                            valorantJson["partySize"] = 2147483647;
+                            valorantJson["playerTitleId"] = "a6d9e243-4046-b025-358e-0087b4b7fcf3";
+                            valorantJson["playerCardId"] = "bcf9cff4-4163-a536-458d-22b8904876ad";
+                            valorantJson["preferredLevelBorderId"] = "6694d7f7-4ab9-8545-5921-35a9ea8cec24";
+                            
+                            Trace.WriteLine("!!!!Rank: " + Rank +"\naccountLevel: " + valorantJson["accountLevel"] + "\ncompetitiveTier: " + valorantJson["competitiveTier"] + "\nleaderboardPosition: " + valorantJson["leaderboardPosition"]);
+                            var valorantByte = Encoding.ASCII.GetBytes(JsonSerializer.Serialize(valorantJson));
+                            valorantBase64 = Convert.ToBase64String(valorantByte);
+                            presence.Element("games")?.Element("valorant")?.Element("p")?.ReplaceNodes(valorantBase64);
+                        }
+                    }
                     continue;
+                }
+
                 presence.Element("status")?.Remove();
 
                 if (targetStatus == "mobile")
@@ -360,6 +552,7 @@ internal class MainController : ApplicationContext
                 // get a slightly better user experience.
                 if (ValorantVersion is null)
                 {
+
                     var valorantBase64 = presence.Element("games")?.Element("valorant")?.Element("p")?.Value;
                     if (valorantBase64 is not null)
                     {
@@ -367,7 +560,11 @@ internal class MainController : ApplicationContext
                         var valorantJson = JsonSerializer.Deserialize<JsonNode>(valorantPresence);
                         ValorantVersion = valorantJson?["partyClientVersion"]?.GetValue<string>();
                         Trace.WriteLine("Found VALORANT version: " + ValorantVersion);
-                        // only resend
+
+                        if (DefaultPlayerJson is null)
+                            DefaultPlayerJson = valorantJson;
+                            SetProfileDefault();
+                            // only resend
                         if (InsertedFakePlayer && ValorantVersion is not null)
                             await SendFakePlayerPresenceAsync();
                     }
@@ -380,12 +577,14 @@ internal class MainController : ApplicationContext
             var sb = new StringBuilder();
             var xws = new XmlWriterSettings { OmitXmlDeclaration = true, Encoding = Encoding.UTF8, ConformanceLevel = ConformanceLevel.Fragment, Async = true };
             using (var xw = XmlWriter.Create(sb, xws))
-            {
+            { 
                 foreach (var xElement in xml.Root.Elements())
                     xElement.WriteTo(xw);
             }
 
             var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+            
+            //await Incoming.WriteAsync(bytes, 0, bytes.Length);
             await Outgoing.WriteAsync(bytes, 0, bytes.Length);
             Trace.WriteLine("<!--DECEIVE TO SERVER-->" + sb);
         }
@@ -395,13 +594,33 @@ internal class MainController : ApplicationContext
             Trace.WriteLine("Error rewriting presence.");
         }
     }
-
+    private void SetProfileDefault()
+    {
+        foreach (KeyValuePair<string, int[]> item in Ranks)
+        {
+            int[] i = item.Value;
+            int index = 0;
+            foreach(int j in i)
+            {
+                index += 1;
+                if (j == (int)DefaultPlayerJson["competitiveTier"])
+                {
+                    Rank = item.Key;
+                    Trace.WriteLine("DEFAULTRANK: " + item.Key);
+                    RankNum = index;
+                }
+            }
+        }
+        gameName = null!;
+        PlayerLevel = (int)DefaultPlayerJson["accountLevel"];
+        LeaderboardNum = (int)DefaultPlayerJson["leaderboardPosition"];
+    }
     private async Task SendFakePlayerPresenceAsync()
     {
         SentFakePlayerPresence = true;
         // VALORANT requires a recent version to not display "Version Mismatch"
         var valorantPresence = Convert.ToBase64String(
-            Encoding.UTF8.GetBytes($"{{\"isValid\":true,\"partyId\":\"00000000-0000-0000-0000-000000000000\",\"partyClientVersion\":\"{ValorantVersion ?? "unknown"}\"}}")
+            Encoding.UTF8.GetBytes($"{{\"isValid\":true,\"partyId\":\"00000000-0000-0000-0000-000000000000\",\"partyClientVersion\":\"{ValorantVersion ?? "unknown"}\",\"competitiveTier\":2,\"leaderboardPosition\":1}}")
         );
 
         var randomStanzaId = Guid.NewGuid();
@@ -479,4 +698,5 @@ internal class MainController : ApplicationContext
         Connected = false;
         ConnectionErrored?.Invoke(this, EventArgs.Empty);
     }
+}
 }
