@@ -48,12 +48,7 @@ internal class MainController : ApplicationContext
     private bool Enabled { get; set; } = true;
     private string Status { get; set; } = null!;
     private JsonNode? DefaultPlayerJson { get; set; } = null!;
-    private string Rank { get; set; } = null!;
-    private int? RankNum { get; set; } = null!;
-    private int? LeaderboardNum { get; set; } = null!;
-    private int? PlayerLevel { get; set; } = null!;
-    private string gameName { get; set; } = null!;
-    private string StatusFile { get; } = Path.Combine(Persistence.DataDir, "status");
+    private string StatusFile { get; } = Path.Combine(Persistence.DataDir, "config.xml");
     private bool ConnectToMuc { get; set; } = true;
     private bool InsertedFakePlayer { get; set; }
     private bool SentFakePlayerPresence { get; set; }
@@ -65,10 +60,20 @@ internal class MainController : ApplicationContext
     private bool Connected { get; set; }
     private string LastPresence { get; set; } = null!; // we resend this if the state changes
 
+    private string Rank { get; set; } = null!;
+    private int? RankNum { get; set; } = null!;
+    private int? LeaderboardNum { get; set; } = null!;
+    private int? PlayerLevel { get; set; } = null!;
+    private int AllyScore { get; set; } = 0;
+    private int EnemyScore { get; set; } = 0;
+    private int PartySize { get; set; } = 5;
+    private string gameName { get; set; } = null!;
+
     private ToolStripMenuItem EnabledMenuItem { get; set; } = null!;
     private ToolStripMenuItem ChatStatus { get; set; } = null!;
     private ToolStripMenuItem OfflineStatus { get; set; } = null!;
     private ToolStripMenuItem AwayStatus { get; set; } = null!;
+    private ToolStripMenuItem CustomStatus { get; set; } = null!;
     private ToolStripMenuItem MobileStatus { get; set; } = null!;
 
     private ToolStripMenuItem DefaultRank { get; set; } = null!;
@@ -85,6 +90,7 @@ internal class MainController : ApplicationContext
     private ToolStripMenuItem OneRankNum { get; set; } = null!;
     private ToolStripMenuItem TwoRankNum { get; set; } = null!;
     private ToolStripMenuItem ThreeRankNum { get; set; } = null!;
+
 
         internal event EventHandler? ConnectionErrored;
 
@@ -108,31 +114,31 @@ internal class MainController : ApplicationContext
 
         ToolStripMenuItem StatusItem(string item_name, string newStatus = null!)
         {
+                if (newStatus is null)
+                    newStatus = item_name;
                 var item = new ToolStripMenuItem(item_name, null, async (_, _) =>
                 {
-                    if (newStatus is null)
-                        newStatus = item_name.ToLower();
-                    await UpdateStatusAsync(Status = newStatus);
+                    await UpdateStatusAsync(Status = newStatus.ToLower());
                     Enabled = true;
                     UpdateTray();
                 })
-                { Checked = Status.Equals(item_name) };
+                { Checked = Status.Equals(newStatus.ToLower()) };
                 return item;
         }
 
 
-        ChatStatus = StatusItem("Online", "chat");
+        ChatStatus = StatusItem("Default Online", "chat");
         OfflineStatus = StatusItem("Offline");
         AwayStatus = StatusItem("Away");
-        //CustomStatus = StatusItem("");
+        CustomStatus = StatusItem("Custom");
         MobileStatus = StatusItem("Mobile");
 
-        var typeMenuItem = new ToolStripMenuItem("Status Type", null, ChatStatus, OfflineStatus, MobileStatus);
+        var typeMenuItem = new ToolStripMenuItem("Status Type", null, ChatStatus, OfflineStatus, AwayStatus, CustomStatus, MobileStatus);
 
         ToolStripMenuItem RankItem(string item_name)
         {
                 var item = new ToolStripMenuItem(item_name, null, async (_, _) =>
-                {
+                { 
                     Trace.WriteLine("[[CHANGING RANK TO: " + item_name);
                     LeaderboardNum = 0;
                     Rank = item_name;
@@ -166,7 +172,6 @@ internal class MainController : ApplicationContext
             {
                 RankNum = item_name;
                 await UpdateStatusAsync(Status);
-                await SendMessageFromFakePlayerAsync("Your rank is now set to " + Rank + " " + RankNum + " #" + LeaderboardNum);
                 Enabled = true;
                 UpdateTray();
             })
@@ -320,6 +325,7 @@ internal class MainController : ApplicationContext
                         try
                         {
                             PlayerLevel = Int32.Parse(message.Split()[1]);
+                            await UpdateStatusAsync(Status);
                             await SendMessageFromFakePlayerAsync("Level set to " + PlayerLevel);
                         }
                         catch
@@ -332,7 +338,7 @@ internal class MainController : ApplicationContext
                         try
                         {
                             LeaderboardNum = Int32.Parse(message.Split(' ')[1]);
-                            await SendMessageFromFakePlayerAsync("Your rank is now set to " + Rank + " " + RankNum + " #" + LeaderboardNum);
+                            await UpdateStatusAsync(Status);
                         }
                         catch
                         {
@@ -344,6 +350,7 @@ internal class MainController : ApplicationContext
                         try
                         {
                             gameName = message.Substring(8, message.Length-8);
+                            await UpdateStatusAsync(Status);
                             await SendMessageFromFakePlayerAsync("Game name set to: " + gameName);
                         }
                         catch
@@ -395,7 +402,20 @@ internal class MainController : ApplicationContext
 
                 // Insert fake player into roster
                 const string roster = "<query xmlns='jabber:iq:riotgames:roster'>";
+                /*
                 const string idk = "<x xmlns='http://jabber.org/protocol/muc#user'>";
+                bool matchingPuuid = false; 
+                if (content.Contains("\'"))
+                {
+                    if (content.Split('\n').Length >= 4)
+                        if (content.Split('\'')[1] == content.Split('\'')[3])
+                        {
+                            Trace.WriteLine("MATCHINGPUUID");
+                            matchingPuuid = true;
+                        }
+                        
+                }
+                */
                 if (!InsertedFakePlayer && content.Contains(roster))
                 {
                     InsertedFakePlayer = true;
@@ -409,12 +429,13 @@ internal class MainController : ApplicationContext
                     await Incoming.WriteAsync(contentBytes, 0, contentBytes.Length);
                     Trace.WriteLine("<!--DECEIVE TO RC-->" + content);
                 }
-                else if (content.Contains(idk))
+                /*
+                else if (content.Contains(idk) || matchingPuuid == true || content.StartsWith("<presence from="))
                 {
-
-                    //await Incoming.WriteAsync(contentBytes, 0, contentBytes.Length);
-                    Trace.WriteLine("<!--DECEIVE TO RC-->" + content);
+                    Trace.WriteLine("<!--SERVER TO RC ORIGINAL-->" + content);
+                    await PossiblyRewriteAndResendPresenceAsync(content, Status, "incoming");
                 }
+                */
                 else
                 {
                     await Incoming.WriteAsync(bytes, 0, byteCount);
@@ -436,7 +457,7 @@ internal class MainController : ApplicationContext
         }
     }
 
-    private async Task PossiblyRewriteAndResendPresenceAsync(string content, string targetStatus)
+    private async Task PossiblyRewriteAndResendPresenceAsync(string content, string targetStatus, string direction="outgoing")
     {
         try
         {
@@ -462,12 +483,16 @@ internal class MainController : ApplicationContext
 
                 if (targetStatus != "chat" || presence.Element("games")?.Element("league_of_legends")?.Element("st")?.Value != "dnd")
                 {
-                    presence.Element("show")?.ReplaceNodes(targetStatus);
-                    presence.Element("games")?.Element("league_of_legends")?.Element("st")?.ReplaceNodes(targetStatus);
+                    if (targetStatus != "custom")
+                    {
+                        presence.Element("show")?.ReplaceNodes(targetStatus);
+                        presence.Element("games")?.Element("league_of_legends")?.Element("st")?.ReplaceNodes(targetStatus);
+                    } 
                 }
 
-                if (targetStatus == "chat")
+                if (targetStatus == "custom" || targetStatus == "chat")
                 {
+                    Trace.WriteLine("CUSTOM");
                     var valorantBase64 = presence.Element("games")?.Element("valorant")?.Element("p")?.Value;
                     if (valorantBase64 is not null)
                     {
@@ -485,7 +510,7 @@ internal class MainController : ApplicationContext
                                 }
                                 else
                                 {
-                                    if (RankNum is not null)
+                                    if (targetStatus == "custom" && RankNum is not null)
                                         newRank = Ranks[Rank][((int)RankNum)-1];
                                     else
                                         Trace.WriteLine("RankNum is null");
@@ -495,22 +520,21 @@ internal class MainController : ApplicationContext
                             else
                             {
                                 continue;
-                                //valorantJson = DefaultPlayerJson; 
                             }
+
                             valorantJson["accountLevel"] = PlayerLevel;
                             //valorantJson["competitiveTier"] = newRank;
                             valorantJson["leaderboardPosition"] = LeaderboardNum;
                             if (gameName is not null)
+                            {
                                 valorantJson["queueId"] = gameName;
                                 valorantJson["sessionLoopState"] = "INGAME";
                                 valorantJson["partyOwnerSessionLoopsState"] = "INGAME";
-                            
-                            valorantJson["sessionLoopState"] = "INGAME";
-                            valorantJson["partyOwnerSessionLoopsState"] = "INGAME";
-                            valorantJson["customGameName"] = "peeeee";
-                            valorantJson["partyOwnerMatchMap"] = "/Game/Maps/Bonsai/Bonsai";
-                            valorantJson["partyOwnerMatchScoreAllyTeam"] = 50;
-                            valorantJson["partyOwnerMatchScoreEnemyTeam"] = 50;
+                                valorantJson["partyOwnerMatchScoreAllyTeam"] = AllyScore;
+                                valorantJson["partyOwnerMatchScoreEnemyTeam"] = EnemyScore;
+                            }
+
+                            valorantJson["playerCardId"] = "bcf9cff4-4163-a536-458d-22b8904876ad";
                             valorantJson["matchMap"] = "/Game/Maps/Canyon/Canyon";
                             valorantJson["partyId"] = "e5067d61-7d60-4e68-a0fd-71e1a6f29c58";
                             valorantJson["maxPartySize"] = 2147483647;
@@ -519,7 +543,6 @@ internal class MainController : ApplicationContext
                             valorantJson["playerTitleId"] = "a6d9e243-4046-b025-358e-0087b4b7fcf3";
                             valorantJson["playerCardId"] = "bcf9cff4-4163-a536-458d-22b8904876ad";
                             valorantJson["preferredLevelBorderId"] = "6694d7f7-4ab9-8545-5921-35a9ea8cec24";
-                            
                             Trace.WriteLine("!!!!Rank: " + Rank +"\naccountLevel: " + valorantJson["accountLevel"] + "\ncompetitiveTier: " + valorantJson["competitiveTier"] + "\nleaderboardPosition: " + valorantJson["leaderboardPosition"]);
                             var valorantByte = Encoding.ASCII.GetBytes(JsonSerializer.Serialize(valorantJson));
                             valorantBase64 = Convert.ToBase64String(valorantByte);
@@ -583,10 +606,16 @@ internal class MainController : ApplicationContext
             }
 
             var bytes = Encoding.UTF8.GetBytes(sb.ToString());
-            
-            //await Incoming.WriteAsync(bytes, 0, bytes.Length);
-            await Outgoing.WriteAsync(bytes, 0, bytes.Length);
-            Trace.WriteLine("<!--DECEIVE TO SERVER-->" + sb);
+            if (direction == "incoming")
+            {
+                await Incoming.WriteAsync(bytes, 0, bytes.Length);
+                Trace.WriteLine("<!--DECEIVE TO RC-->" + sb);
+            }  
+            else if (direction == "outgoing")
+            {
+                await Outgoing.WriteAsync(bytes, 0, bytes.Length);
+                Trace.WriteLine("<!--DECEIVE TO SERVER-->" + sb);
+            }   
         }
         catch (Exception e)
         {
@@ -677,10 +706,12 @@ internal class MainController : ApplicationContext
 
         await PossiblyRewriteAndResendPresenceAsync(LastPresence, newStatus);
 
-        if (newStatus == "chat")
-            await SendMessageFromFakePlayerAsync("You are now appearing online.");
+        if (newStatus == "offline")
+            await SendMessageFromFakePlayerAsync("You are now appearing offline.");
+        else if (newStatus == "custom" && gameName is not null)
+            await SendMessageFromFakePlayerAsync("You are now " + gameName + ". Your rank is" + Rank + " " + RankNum + " "+ LeaderboardNum + " Level " + PlayerLevel);
         else
-            await SendMessageFromFakePlayerAsync("You are now appearing " + newStatus + ".");
+            await SendMessageFromFakePlayerAsync("You are now " + newStatus + ". Your rank is" + Rank + " " + RankNum + " " + LeaderboardNum + " Level " + PlayerLevel);
     }
 
     private void LoadStatus()
