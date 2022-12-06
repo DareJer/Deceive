@@ -15,7 +15,6 @@ using Deceive.Properties;
 
 namespace Deceive
 {
-
     internal class MainController : ApplicationContext
     {
         internal MainController()
@@ -49,7 +48,7 @@ namespace Deceive
         private bool Enabled { get; set; } = true;
         private string Status { get; set; } = null!;
         private JsonNode? DefaultPlayerJson { get; set; } = null!;
-        private string StatusFile { get; } = Path.Combine(Persistence.DataDir, "config.xml");
+        private string StatusFile { get; } = Path.Combine(Persistence.DataDir, "settings.json");
         private bool ConnectToMuc { get; set; } = true;
         private bool InsertedFakePlayer { get; set; }
         private bool SentFakePlayerPresence { get; set; }
@@ -61,15 +60,18 @@ namespace Deceive
         private bool Connected { get; set; }
         private string LastPresence { get; set; } = null!; // we resend this if the state changes
 
+
+        private bool? DefaultOffline { get; set; } = true;
+        private bool? UseLastProfile { get; set; } = null!;
         private string Rank { get; set; } = null!;
         private int? RankNum { get; set; } = null!;
         private int? LeaderboardNum { get; set; } = null!;
         private int? PlayerLevel { get; set; } = null!;
-        private int AllyScore { get; set; } = 0;
-        private int EnemyScore { get; set; } = 0;
-        private int PartySize { get; set; } = 1;
+        private int? AllyScore { get; set; } = null!;
+        private int? EnemyScore { get; set; } = null!;
+        private int? PartySize { get; set; } = 1;
         private const int MaxPartySize = 2147483647;
-        private string gameName { get; set; } = null!;
+        private string GameName { get; set; } = null!;
 
         private ToolStripMenuItem EnabledMenuItem { get; set; } = null!;
         private ToolStripMenuItem ChatStatus { get; set; } = null!;
@@ -353,9 +355,9 @@ namespace Deceive
                         {
                             try
                             {
-                                gameName = message.Substring(8, message.Length - 8);
+                                GameName = message.Substring(8, message.Length - 8);
                                 await UpdateStatusAsync(Status);
-                                await SendMessageFromFakePlayerAsync("Game name set to: " + gameName);
+                                await SendMessageFromFakePlayerAsync("Game name set to: " + GameName);
                             }
                             catch
                             {
@@ -397,6 +399,44 @@ namespace Deceive
                             {
                                 await SendMessageFromFakePlayerAsync("Invalid arguments. Syntax: enemyscore <number>");
                             }
+                        }
+                        else if (message.ToLower().StartsWith("uselastprofile"))
+                        {
+                            if (UseLastProfile != null)
+                            {
+                                if (args.Length == 0)
+                                    UseLastProfile = !UseLastProfile;
+                                else
+                                {
+                                    if (args[1] == "true" || args[1] == "on")
+                                        UseLastProfile = true;
+                                    else if (args[1] == "false" || args[1] == "off")
+                                        UseLastProfile = false;
+                                    else
+                                        await SendMessageFromFakePlayerAsync("Invalid arguments. Syntax: uselastprofile <true/false>");
+                                }
+                            }
+                            else
+                                UseLastProfile = true;
+                        }
+                        else if (message.ToLower().StartsWith("defaultoffline"))
+                        {
+                            if (DefaultOffline != null)
+                            {
+                                if (args.Length == 0)
+                                    DefaultOffline = !DefaultOffline;
+                                else
+                                {
+                                    if (args[1] == "true" || args[1] == "on")
+                                        DefaultOffline = true;
+                                    else if (args[1] == "false" || args[1] == "off")
+                                        DefaultOffline = false;
+                                    else
+                                        await SendMessageFromFakePlayerAsync("Invalid arguments. Syntax: defaultoffline <true/false>");
+                                }
+                            }
+                            else
+                                DefaultOffline = true;
                         }
                         //Don't send anything involving our fake user to chat servers
                         Trace.WriteLine("<!--RC TO SERVER REMOVED-->" + content);
@@ -523,23 +563,24 @@ namespace Deceive
 
                     if (targetStatus != "chat" || presence.Element("games")?.Element("league_of_legends")?.Element("st")?.Value != "dnd")
                     {
-                        if (targetStatus != "custom")
+                        if (targetStatus == "offline" || targetStatus == "mobile")
                         {
                             presence.Element("show")?.ReplaceNodes(targetStatus);
                             presence.Element("games")?.Element("league_of_legends")?.Element("st")?.ReplaceNodes(targetStatus);
                         }
                     }
 
-                    if (targetStatus == "custom" || targetStatus == "chat")
+                    if (targetStatus == "chat" || targetStatus == "custom" || targetStatus == "away")
                     {
                         var valorantBase64 = presence.Element("games")?.Element("valorant")?.Element("p")?.Value;
+                    
                         if (valorantBase64 is not null)
                         {
                             int? newRank = null!;
                             var valorantPresence = Encoding.UTF8.GetString(Convert.FromBase64String(valorantBase64));
+                            Trace.WriteLine("Presence: " + valorantPresence);
                             var valorantJson = JsonSerializer.Deserialize<JsonNode>(valorantPresence);
                             if (valorantJson is not null)
-                            {
                                 Trace.WriteLine("!!RankBefore: " + Rank + "\naccountLevel: " + valorantJson?["accountLevel"] + "\ncompetitiveTier: " + valorantJson?["competitiveTier"] + "\nleaderboardPosition: " + valorantJson?["leaderboardPosition"]);
                                 if (Rank != "Default")
                                 {
@@ -563,13 +604,19 @@ namespace Deceive
 
                                 valorantJson["accountLevel"] = PlayerLevel is null ? valorantJson?["acccountLevel"]?.GetValue<int>() : PlayerLevel;
                                 valorantJson["leaderboardPosition"] = LeaderboardNum is null ? valorantJson["leaderboardPosition"]?.GetValue<int>() : LeaderboardNum;
-                                if (targetStatus == "custom" && gameName is not null)
+                                if (targetStatus == "custom" && GameName is not null)
                                 {
-                                    valorantJson["queueId"] = gameName;
+                                    valorantJson["queueId"] = GameName;
                                     valorantJson["sessionLoopState"] = "INGAME";
                                     valorantJson["partyOwnerSessionLoopsState"] = "INGAME";
-                                    valorantJson["partyOwnerMatchScoreAllyTeam"] = AllyScore;
-                                    valorantJson["partyOwnerMatchScoreEnemyTeam"] = EnemyScore;
+                                    valorantJson["partyOwnerMatchScoreAllyTeam"] = AllyScore is null ? valorantJson["partyOwnerMatchScoreAllyTeam"] : AllyScore;
+                                    valorantJson["partyOwnerMatchScoreEnemyTeam"] = EnemyScore is null ? valorantJson["partyOwnerMatchScoreEnemyTeam"] : EnemyScore;
+                                }
+                                else if (targetStatus == "away")
+                                {
+                                    presence.Element("show")?.ReplaceNodes(targetStatus);
+                                    valorantJson["sessionLoopState"] = "MENUS";
+                                    valorantJson["partyOwnerSessionLoopsState"] = "MENUS";
                                 }
                                 valorantJson["maxPartySize"] = PartySize > valorantJson["maxPartySize"]?.GetValue<int>() ? MaxPartySize : valorantJson["maxPartySize"]?.GetValue<int>();
                                 valorantJson["partySize"] = PartySize > MaxPartySize ? MaxPartySize : PartySize;
@@ -627,9 +674,6 @@ namespace Deceive
                             ValorantVersion = valorantJson?["partyClientVersion"]?.GetValue<string>();
                             Trace.WriteLine("Found VALORANT version: " + ValorantVersion);
 
-                            if (DefaultPlayerJson is null)
-                                DefaultPlayerJson = valorantJson;
-                            //SetProfileDefault();
                             // only resend
                             if (InsertedFakePlayer && ValorantVersion is not null)
                                 await SendFakePlayerPresenceAsync();
@@ -685,7 +729,7 @@ namespace Deceive
                         }
                     }
                 }
-                gameName = null!;
+                GameName = null!;
                 PlayerLevel = DefaultPlayerJson["accountLevel"]?.GetValue<int>();
                 LeaderboardNum = DefaultPlayerJson["leaderboardPosition"]?.GetValue<int>();
             }
@@ -696,7 +740,7 @@ namespace Deceive
             SentFakePlayerPresence = true;
             // VALORANT requires a recent version to not display "Version Mismatch"
             var valorantPresence = Convert.ToBase64String(
-                Encoding.UTF8.GetBytes($"{{\"isValid\":true,\"partyId\":\"00000000-0000-0000-0000-000000000000\",\"partyClientVersion\":\"{ValorantVersion ?? "unknown"}\",\"competitiveTier\":2,\"leaderboardPosition\":1}}")
+                Encoding.UTF8.GetBytes($"{{\"isValid\":true,\"partyId\":\"00000000-0000-0000-0000-000000000000\",\"partyClientVersion\":\"{ValorantVersion ?? "unknown"}\",\"competitiveTier\":\"2\",\"leaderboardPosition\":\"1\"}}")
             );
 
             var randomStanzaId = Guid.NewGuid();
@@ -755,21 +799,60 @@ namespace Deceive
 
             if (newStatus == "offline")
                 await SendMessageFromFakePlayerAsync("You are now appearing offline.");
-            else if (newStatus == "custom" && gameName is not null)
-                await SendMessageFromFakePlayerAsync("You are now " + gameName + ". Your rank is" + Rank + " " + RankNum + " " + LeaderboardNum + " Level " + PlayerLevel);
+            else if (newStatus == "custom" && GameName is not null)
+                await SendMessageFromFakePlayerAsync("You are now " + GameName + ". Your rank is " + Rank + " " + RankNum + " " + LeaderboardNum + " Level " + PlayerLevel);
             else
-                await SendMessageFromFakePlayerAsync("You are now " + newStatus + ". Your rank is" + Rank + " " + RankNum + " " + LeaderboardNum + " Level " + PlayerLevel);
+                await SendMessageFromFakePlayerAsync("You are now " + newStatus + ". Your rank is " + Rank + " " + RankNum + " " + LeaderboardNum + " Level " + PlayerLevel);
         }
 
         private void LoadStatus()
         {
             if (File.Exists(StatusFile))
-                Status = File.ReadAllText(StatusFile) == "mobile" ? "mobile" : "offline";
-            else
-                Status = "offline";
+            {
+                var json = JsonSerializer.Deserialize<JsonNode>(File.ReadAllText(StatusFile));
+                if (json is not null)
+                {
+                    if (json?["DefaultOffline"]?.GetValue<bool>() == true)
+                        Status = "offline";
+                    if (json?["UseLastProfile"]?.GetValue<bool>() == true)
+                    {
+                        Status = json?["Status"]?.GetValue<string>();
+                        Rank = json?["Rank"]?.GetValue<string>();
+                        RankNum = json?["RankNum"]?.GetValue<int>();
+                        LeaderboardNum = json?["LeaderboardNum"]?.GetValue<int>();
+                        PlayerLevel = json?["PlayerLevel"]?.GetValue<int>();
+                        AllyScore = json?["AllyScore"]?.GetValue<int>();
+                        EnemyScore = json?["EnemyScore"]?.GetValue<int>();
+                        PartySize = json?["PartySize"]?.GetValue<int>();
+                        GameName = json?["GameName"]?.GetValue<string>();
+                        return;
+                    }
+                }
+            }
+            Status = "offline";
         }
 
-        private void SaveStatus() => File.WriteAllText(StatusFile, Status);
+        private void SaveStatus()
+        {
+            var jsonObj = new
+            {
+                DefaultOffline,
+                UseLastProfile,
+                Status,
+                Rank,
+                RankNum,
+                LeaderboardNum,
+                AllyScore,
+                EnemyScore,
+                PartySize,
+                GameName,
+            };
+
+            var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+            string jsonStr = JsonSerializer.Serialize(jsonObj, jsonOptions);
+            File.WriteAllText(StatusFile, jsonStr);
+        }
+            
 
         private void OnConnectionErrored()
         {
@@ -777,4 +860,5 @@ namespace Deceive
             ConnectionErrored?.Invoke(this, EventArgs.Empty);
         }
     }
+
 }
